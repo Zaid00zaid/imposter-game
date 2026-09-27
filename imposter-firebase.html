@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>لعبة الدخيل</title>
+  <style>
+    :root{--bg:#0f1224;--card:#1b1f3b;--card2:#242a52;--accent:#ff5d73;--accent2:#5db3ff;--text:#f1f2fb;--muted:#9aa0c3}
+    *{box-sizing:border-box}
+    body{background:var(--bg);color:var(--text);font-family:-apple-system,Segoe UI,Tahoma,Arial,sans-serif;margin:0;display:flex;justify-content:center;min-height:100vh}
+    #app{width:100%;max-width:460px;padding:20px 16px}
+    h1{font-size:22px;text-align:center;margin:6px 0 18px}
+    .card{background:var(--card);border-radius:18px;padding:20px;margin-bottom:14px;box-shadow:0 6px 20px rgba(0,0,0,.15)}
+    input{width:100%;padding:13px;border-radius:12px;border:none;background:var(--card2);color:var(--text);font-size:16px;margin:6px 0}
+    button{width:100%;padding:13px;border-radius:12px;border:none;background:var(--accent);color:#fff;font-size:16px;font-weight:600;margin:6px 0;cursor:pointer}
+    button.secondary{background:var(--card2);color:var(--text)}
+    button.blue{background:var(--accent2)}
+    button:disabled{opacity:.45}
+    .code{font-size:32px;letter-spacing:6px;text-align:center;font-weight:800;color:var(--accent2);margin:8px 0}
+    .muted{color:var(--muted);font-size:14px;text-align:center;margin-top:4px}
+    .player-row{display:flex;justify-content:space-between;align-items:center;padding:10px 4px;border-bottom:1px solid rgba(255,255,255,.06)}
+    .player-row:last-child{border:none}
+    .role-box{text-align:center;padding:30px 15px;border-radius:18px}
+    .role-imposter{background:linear-gradient(145deg,#3a1030,#5c1030)}
+    .role-crew{background:linear-gradient(145deg,#0d2e3a,#0d3a4d)}
+    .big{font-size:26px;font-weight:800;margin:8px 0}
+    .word{font-size:30px;font-weight:900;color:var(--accent2);margin-top:6px}
+    .vote-btn{display:flex;justify-content:space-between;align-items:center;background:var(--card2);border-radius:12px;padding:12px;margin:6px 0;cursor:pointer}
+    .vote-btn.selected{outline:2px solid var(--accent)}
+    .tag{font-size:12px;color:var(--muted)}
+    .center{text-align:center}
+    .loading{text-align:center;color:var(--muted);padding:40px 0}
+  </style>
+</head>
+<body>
+  <div id="app"><div class="loading">...جارِ التحميل</div></div>
+
+  <!-- Firebase SDK -->
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
+
+  <script>
+    // ========== بيانات مشروعك ==========
+    const firebaseConfig = {
+      apiKey: "AIzaSyCUiMWrPIQrpXgora7SUinPlvBK_-0yD40",
+      authDomain: "impostor-game-3caea.firebaseapp.com",
+      databaseURL: "https://impostor-game-3caea-default-rtdb.asia-southeast1.firebasedatabase.app",
+      projectId: "impostor-game-3caea",
+      storageBucket: "impostor-game-3caea.firebasestorage.app",
+      messagingSenderId: "115922453384",
+      appId: "1:115922453384:web:12101a3aa0c43bd904303d",
+      measurementId: "G-XPB60EK26S"
+    };
+    // ====================================
+
+    firebase.initializeApp(firebaseConfig);
+    const db = firebase.database();
+
+    // كلمات اللعبة
+    const WORDS = [
+      ["مطعم","بيتزا"], ["مطعم","سوشي"], ["مكان","مطار"], ["مكان","شاطئ"],
+      ["حيوان","أسد"], ["حيوان","قطة"], ["رياضة","كرة قدم"], ["رياضة","سباحة"],
+      ["مهنة","طبيب"], ["مهنة","معلم"], ["فيلم","سينما"], ["طعام","كنافة"],
+      ["مشروب","قهوة"], ["مكان","مستشفى"], ["مهنة","طيار"]
+    ];
+
+    let myId = localStorage.getItem('imp_uid') || ('p_' + Math.random().toString(36).slice(2) + Date.now().toString(36));
+    localStorage.setItem('imp_uid', myId);
+    let myName = localStorage.getItem('imp_name') || '';
+    let roomCode = null;
+    let room = null;
+    let unsub = null;
+
+    function genCode() {
+      const c = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+      let s = '';
+      for (let i = 0; i < 4; i++) s += c[Math.floor(Math.random() * c.length)];
+      return s;
+    }
+
+    function render() {
+      const app = document.getElementById('app');
+      if (!roomCode) {
+        app.innerHTML = landingHTML();
+        bindLanding();
+        return;
+      }
+      if (!room) {
+        app.innerHTML = '<div class="loading">...جارِ الدخول للغرفة</div>';
+        return;
+      }
+
+      const isHost = room.hostId === myId;
+
+      if (room.status === 'lobby') app.innerHTML = lobbyHTML(isHost);
+      else if (room.status === 'playing') app.innerHTML = roleHTML(isHost);
+      else if (room.status === 'voting') app.innerHTML = votingHTML(isHost);
+      else if (room.status === 'results') app.innerHTML = resultsHTML(isHost);
+
+      bindDynamic(isHost);
+    }
+
+    function landingHTML() {
+      return `
+        <h1>🕵️ لعبة الدخيل</h1>
+        <div class="card">
+          <input id="nameInput" placeholder="اسمك" value="${myName}">
+          <button id="createBtn">إنشاء غرفة جديدة</button>
+          <div style="height:8px"></div>
+          <input id="codeInput" placeholder="كود الغرفة" style="text-align:center;text-transform:uppercase;letter-spacing:4px">
+          <button id="joinBtn" class="blue">انضمام لغرفة</button>
+        </div>
+        <p class="muted">أدخل اسمك، ثم أنشئ غرفة أو انضم لغرفة أصدقائك بالكود</p>
+      `;
+    }
+
+    function bindLanding() {
+      document.getElementById('createBtn').onclick = async () => {
+        const name = document.getElementById('nameInput').value.trim();
+        if (!name) return alert('اكتب اسمك أولاً');
+        myName = name;
+        localStorage.setItem('imp_name', name);
+
+        const code = genCode();
+        await db.ref('rooms/' + code).set({
+          status: 'lobby',
+          hostId: myId,
+          players: { [myId]: { name } },
+          round: 0,
+          votes: {},
+          category: '',
+          word: '',
+          imposterId: ''
+        });
+        enterRoom(code);
+      };
+
+      document.getElementById('joinBtn').onclick = async () => {
+        const name = document.getElementById('nameInput').value.trim();
+        const code = document.getElementById('codeInput').value.trim().toUpperCase();
+        if (!name) return alert('اكتب اسمك أولاً');
+        if (!code) return alert('اكتب كود الغرفة');
+
+        const snap = await db.ref('rooms/' + code).once('value');
+        if (!snap.exists()) return alert('الغرفة غير موجودة');
+
+        myName = name;
+        localStorage.setItem('imp_name', name);
+        await db.ref('rooms/' + code + '/players/' + myId).set({ name });
+        enterRoom(code);
+      };
+    }
+
+    function enterRoom(code) {
+      roomCode = code;
+      if (unsub) unsub();
+      unsub = db.ref('rooms/' + code).on('value', snap => {
+        room = snap.val();
+        render();
+      });
+    }
+
+    function lobbyHTML(isHost) {
+      const players = Object.entries(room.players || {});
+      return `
+        <h1>🕵️ لعبة الدخيل</h1>
+        <div class="card center">
+          <div class="tag">كود الغرفة</div>
+          <div class="code">${roomCode}</div>
+        </div>
+        <div class="card">
+          ${players.map(([id, p]) => `
+            <div class="player-row">
+              <span>${p.name}${id === room.hostId ? ' 👑' : ''}</span>
+              ${id === myId ? '<span class="tag">أنت</span>' : ''}
+            </div>
+          `).join('')}
+        </div>
+        ${isHost
+          ? `<button id="startBtn" ${players.length < 3 ? 'disabled' : ''}>ابدأ الجولة</button>
+             ${players.length < 3 ? '<p class="muted">تحتاج 3 لاعبين على الأقل</p>' : ''}`
+          : '<p class="muted center">بانتظار المضيف ليبدأ اللعبة...</p>'}
+        <button class="secondary" id="leaveBtn">مغادرة</button>
+      `;
+    }
+
+    function roleHTML(isHost) {
+      const amImposter = myId === room.imposterId;
+      return `
+        <h1>🕵️ لعبة الدخيل</h1>
+        <div class="role-box ${amImposter ? 'role-imposter' : 'role-crew'}">
+          ${amImposter
+            ? `<div class="big">🎭 أنت الدخيل!</div>
+               <p class="muted">حاول تكتشف الكلمة من كلام الباقين بدون ما ينكشف أمرك</p>
+               <div class="tag">الفئة: ${room.category}</div>`
+            : `<div class="big">✅ أنت لاعب عادي</div>
+               <div class="tag">الفئة: ${room.category}</div>
+               <div class="word">${room.word}</div>`}
+        </div>
+        <p class="muted center">ابدأوا النقاش والأسئلة، وبعدها انتقلوا للتصويت</p>
+        ${isHost ? '<button id="voteBtn" class="blue">ابدأ التصويت</button>' : ''}
+      `;
+    }
+
+    function votingHTML(isHost) {
+      const players = Object.entries(room.players || {});
+      const votes = room.votes || {};
+      const votedCount = Object.keys(votes).length;
+      const myVote = votes[myId];
+
+      return `
+        <h1>🗳️ التصويت</h1>
+        <p class="muted center">صوّت على الشخص اللي تشك إنه الدخيل</p>
+        <div class="card">
+          ${players.filter(([id]) => id !== myId).map(([id, p]) => `
+            <div class="vote-btn ${myVote === id ? 'selected' : ''}" data-id="${id}">
+              <span>${p.name}</span>
+              ${myVote === id ? '✅' : ''}
+            </div>
+          `).join('')}
+        </div>
+        <p class="muted center">${votedCount} / ${players.length} صوّتوا</p>
+        ${isHost ? '<button id="revealBtn">إظهار النتيجة</button>' : ''}
+      `;
+    }
+
+    function resultsHTML(isHost) {
+      const players = room.players || {};
+      const votes = room.votes || {};
+      const tally = {};
+      Object.values(votes).forEach(v => { tally[v] = (tally[v] || 0) + 1; });
+
+      let topId = null, topN = -1;
+      Object.entries(tally).forEach(([id, n]) => {
+        if (n > topN) { topN = n; topId = id; }
+      });
+
+      const imposterCaught = topId === room.imposterId;
+
+      return `
+        <h1>🏆 النتيجة</h1>
+        <div class="role-box ${imposterCaught ? 'role-crew' : 'role-imposter'}">
+          <div class="big">${imposterCaught ? 'اللاعبون فازوا! 🎉' : 'الدخيل فاز! 🎭'}</div>
+          <p>الدخيل كان: <b>${(players[room.imposterId] || {}).name || '؟'}</b></p>
+          <p>الكلمة: <b>${room.word}</b> (${room.category})</p>
+          ${topId ? `<p class="muted">الأكثر تصويتاً: ${(players[topId] || {}).name || '؟'} (${topN} صوت)</p>` : ''}
+        </div>
+        ${isHost
+          ? '<button id="againBtn" class="blue">جولة جديدة</button>'
+          : '<p class="muted center">بانتظار المضيف لبدء جولة جديدة</p>'}
+        <button class="secondary" id="leaveBtn">مغادرة</button>
+      `;
+    }
+
+    function bindDynamic(isHost) {
+      const startBtn = document.getElementById('startBtn');
+      if (startBtn) {
+        startBtn.onclick = async () => {
+          const ids = Object.keys(room.players);
+          const imposterId = ids[Math.floor(Math.random() * ids.length)];
+          const [category, word] = WORDS[Math.floor(Math.random() * WORDS.length)];
+          await db.ref('rooms/' + roomCode).update({
+            status: 'playing',
+            imposterId,
+            category,
+            word,
+            votes: {}
+          });
+        };
+      }
+
+      const voteBtn = document.getElementById('voteBtn');
+      if (voteBtn) {
+        voteBtn.onclick = async () => {
+          await db.ref('rooms/' + roomCode).update({ status: 'voting', votes: {} });
+        };
+      }
+
+      document.querySelectorAll('.vote-btn').forEach(btn => {
+        btn.onclick = async () => {
+          await db.ref('rooms/' + roomCode + '/votes/' + myId).set(btn.dataset.id);
+        };
+      });
+
+      const revealBtn = document.getElementById('revealBtn');
+      if (revealBtn) {
+        revealBtn.onclick = async () => {
+          await db.ref('rooms/' + roomCode).update({ status: 'results' });
+        };
+      }
+
+      const againBtn = document.getElementById('againBtn');
+      if (againBtn) {
+        againBtn.onclick = async () => {
+          await db.ref('rooms/' + roomCode).update({
+            status: 'lobby',
+            imposterId: '',
+            category: '',
+            word: '',
+            votes: {},
+            round: (room.round || 0) + 1
+          });
+        };
+      }
+
+      const leaveBtn = document.getElementById('leaveBtn');
+      if (leaveBtn) {
+        leaveBtn.onclick = () => {
+          if (unsub) unsub();
+          roomCode = null;
+          room = null;
+          render();
+        };
+      }
+    }
+
+    // ابدأ
+    render();
+  </script>
+</body>
+</html>
