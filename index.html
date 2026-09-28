@@ -168,45 +168,53 @@
         }
       };
 
-      joinBtn.onclick = async function() {
-        const name = document.getElementById('nameInput').value.trim();
-        const code = document.getElementById('codeInput').value.trim().toUpperCase();
+     joinBtn.onclick = async function() {
+  const name = document.getElementById('nameInput').value.trim();
+  const code = document.getElementById('codeInput').value.trim().toUpperCase();
 
-        if (!name) {
-          showMsg('اكتب اسمك أولاً', 'err');
-          return;
-        }
-        if (!code) {
-          showMsg('اكتب كود الغرفة', 'err');
-          return;
-        }
+  if (!name) {
+    showMsg('اكتب اسمك أولاً', 'err');
+    return;
+  }
+  if (!code) {
+    showMsg('اكتب كود الغرفة', 'err');
+    return;
+  }
 
-        joinBtn.disabled = true;
-        joinBtn.textContent = 'جاري الانضمام...';
-        showMsg('جاري البحث عن الغرفة...', 'info');
+  joinBtn.disabled = true;
+  joinBtn.textContent = 'جاري الانضمام...';
+  showMsg('جاري البحث عن الغرفة...', 'info');
 
-        myName = name;
-        localStorage.setItem('imp_name', name);
+  myName = name;
+  localStorage.setItem('imp_name', name);
 
-        try {
-          const snap = await db.ref('rooms/' + code).once('value');
-          if (!snap.exists()) {
-            joinBtn.disabled = false;
-            joinBtn.textContent = 'انضمام لغرفة';
-            showMsg('الغرفة غير موجودة. تأكد من الكود', 'err');
-            return;
-          }
+  try {
+    // مهلة 8 ثواني
+    const timeoutPromise = new Promise((_, reject) => 
+      setTimeout(() => reject(new Error('انتهت المهلة - الشبكة بطيئة')), 8000)
+    );
 
-          await db.ref('rooms/' + code + '/players/' + myId).set({ name: name });
-          roomCode = code;
-          enterRoom(code);
-        } catch (e) {
-          joinBtn.disabled = false;
-          joinBtn.textContent = 'انضمام لغرفة';
-          showMsg('فشل الانضمام: ' + (e.message || e), 'err');
-        }
-      };
+    const snap = await Promise.race([
+      db.ref('rooms/' + code).once('value'),
+      timeoutPromise
+    ]);
+
+    if (!snap.exists()) {
+      joinBtn.disabled = false;
+      joinBtn.textContent = 'انضمام لغرفة';
+      showMsg('الغرفة غير موجودة. تأكد من الكود', 'err');
+      return;
     }
+
+    await db.ref('rooms/' + code + '/players/' + myId).set({ name: name });
+    roomCode = code;
+    enterRoom(code);
+  } catch (e) {
+    joinBtn.disabled = false;
+    joinBtn.textContent = 'انضمام لغرفة';
+    showMsg('فشل: ' + (e.message || e) + ' — جرب شبكة ثانية', 'err');
+  }
+};
 
     function enterRoom(code) {
       if (unsub) {
